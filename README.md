@@ -8,7 +8,8 @@
 
 - **智能对话**: 使用 Claude Sonnet 4 模型，提供自然流畅的对话体验
 - **知识库检索**: 集成 Bedrock Knowledge Base，快速查询游戏 FAQ
-- **工具调用**: 通过 MCP (Model Context Protocol) 调用外部工具（充值查询）
+- **AgentCore Gateway**: 使用 AWS Bedrock AgentCore Gateway，通过 MCP (Model Context Protocol) 标准化工具调用
+- **IAM 授权**: Gateway 使用 AWS IAM SigV4 签名进行服务间安全认证
 - **流式响应**: 实时展示 Agent 思考过程和工具调用
 - **身份认证**: 使用 Cognito 保护用户数据
 - **云原生**: 完全 Serverless 架构，按需付费
@@ -27,7 +28,7 @@
 │                   (静态网站托管)                                  │
 └────────────────┬───────────────────────────────────────────────┘
                  │
-                 │ Cognito Auth
+                 │ Cognito JWT Auth
                  ↓
 ┌────────────────────────────────────────────────────────────────┐
 │              API Gateway (REST, Streaming)                      │
@@ -39,26 +40,77 @@
 │              Lambda (Strands Agent)                             │
 │         - Claude Sonnet 4 via Bedrock                           │
 │         - Knowledge Base Retrieval                              │
-│         - MCP Tool Integration                                  │
-└───────┬────────────┬─────────────────────────────────────┬─────┘
-        │            │                                     │
-        ↓            ↓                                     ↓
-┌──────────┐  ┌───────────┐                    ┌────────────────┐
-│ Bedrock  │  │ Bedrock   │                    │ Lambda (Tool)  │
-│   LLM    │  │ Knowledge │                    │ Recharge Query │
-│          │  │   Base    │                    │                │
-└──────────┘  └─────┬─────┘                    └────────┬───────┘
-                    │                                   │
-                    ↓                                   ↓
-              ┌─────────┐                        ┌──────────────┐
-              │ S3 Docs │                        │  DynamoDB    │
-              └─────────┘                        │ (充值记录)    │
-                                                 └──────────────┘
+│         - MCP Client (IAM Auth)                                 │
+└───────┬────────────┬────────────────────────────────────────────┘
+        │            │
+        │            │                   ┌─────────────────────────┐
+        ↓            ↓                   │  AWS IAM SigV4 Auth     │
+┌──────────┐  ┌───────────┐             ↓                         │
+│ Bedrock  │  │ Bedrock   │     ┌────────────────────────┐        │
+│   LLM    │  │ Knowledge │     │ AgentCore Gateway      │←───────┘
+│          │  │   Base    │     │  (MCP Endpoint)        │
+└──────────┘  └─────┬─────┘     │  - IAM Authorizer      │
+                    │           │  - Tool Orchestration  │
+                    ↓           └────────┬───────────────┘
+              ┌─────────┐                │ Lambda Target Invoke
+              │ S3 Docs │                ↓
+              └─────────┘       ┌─────────────────────────┐
+                                │  Lambda (MCP Tool)      │
+                                │  Recharge Query         │
+                                └────────┬────────────────┘
+                                         │
+                                         ↓
+                                  ┌──────────────┐
+                                  │  DynamoDB    │
+                                  │ (充值记录)    │
+                                  └──────────────┘
 
 ┌─────────────────────────────────────────────────────────────────┐
 │                    Cognito User Pool                             │
-│              (用户认证 & 授权管理)                                 │
+│              (前端用户认证 & API Gateway 授权)                     │
 └─────────────────────────────────────────────────────────────────┘
+```
+
+### 🔧 AgentCore Gateway 说明
+
+本项目使用 **AWS Bedrock AgentCore Gateway** 作为 MCP (Model Context Protocol) 工具的标准化入口：
+
+#### 核心特性
+- **MCP 协议**: 符合 Model Context Protocol 标准，提供统一的工具调用接口
+- **IAM 授权**: 使用 AWS IAM SigV4 签名进行服务间认证，安全可靠
+- **Lambda 目标**: 将 Lambda 函数暴露为 MCP 工具，自动处理协议转换
+- **工具编排**: Gateway 自动管理工具调用的路由和响应
+
+#### 认证模式
+当前使用 **IAM 授权** 模式：
+- Agent Lambda 使用 IAM 角色的临时凭证
+- 通过 SigV4 签名对请求进行认证
+- Gateway 验证签名并授权访问
+
+#### 可选: Cognito JWT 授权
+CDK 代码中包含使用 Cognito JWT 授权的注释示例：
+- Gateway 可配置为验证 Cognito User Pool 的 JWT token
+- Agent 从 API Gateway 提取用户的 JWT token
+- 使用用户身份调用 Gateway，实现端到端的用户上下文传递
+
+#### 工具定义
+在 CDK 中通过 `toolSchema` 定义 MCP 工具：
+```typescript
+toolSchema: {
+  tools: [{
+    name: 'query_player_recharge',
+    description: '查询玩家的充值历史记录',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        player_id: { type: 'string', description: '玩家ID' },
+        start_date: { type: 'string', description: '开始日期（可选）' },
+        end_date: { type: 'string', description: '结束日期（可选）' },
+      },
+      required: ['player_id'],
+    },
+  }],
+}
 ```
 
 ## 🏗️ 技术栈
@@ -77,7 +129,8 @@
 ### AWS 服务
 - **计算**: AWS Lambda
 - **API**: Amazon API Gateway (REST with Streaming)
-- **认证**: Amazon Cognito
+- **AI 网关**: AWS Bedrock AgentCore Gateway (MCP 工具编排)
+- **认证**: Amazon Cognito (用户认证), AWS IAM (服务间认证)
 - **AI**: Amazon Bedrock (Claude + Knowledge Base)
 - **存储**: Amazon S3, Amazon DynamoDB
 - **CDN**: Amazon CloudFront

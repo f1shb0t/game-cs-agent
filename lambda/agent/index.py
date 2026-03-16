@@ -14,21 +14,16 @@ from strands import Agent
 from strands.models import BedrockModel
 from strands.tools import tool
 
-# MCP 客户端
-try:
-    from strands.tools.mcp import MCPClient
-    from mcp.client.streamable_http import streamablehttp_client
-except ImportError:
-    # 如果 strands 还没有内置 MCP 支持，使用独立的 MCP 客户端
-    from mcp import ClientSession
-    from mcp.client.streamable_http import streamablehttp_client
+# MCP 客户端（使用 IAM SigV4 签名）
+from strands.tools.mcp import MCPClient
+from strands_tools.mcp_proxy_for_aws import aws_iam_streamablehttp_client
 
 
 # 环境变量配置
 KNOWLEDGE_BASE_ID = os.environ.get('KNOWLEDGE_BASE_ID')
 AGENTCORE_GATEWAY_URL = os.environ.get('AGENTCORE_GATEWAY_URL')
+REGION = os.environ.get('AWS_REGION_NAME', 'us-east-1')
 MODEL_ID = 'anthropic.claude-sonnet-4-20250514'
-REGION = 'us-east-1'
 
 # 系统提示词
 SYSTEM_PROMPT = """你是一个游戏客服助手，专门为"星际征途"游戏的玩家提供服务。
@@ -90,11 +85,17 @@ def search_knowledge_base(query: str) -> str:
 
 # 创建 MCP 客户端用于充值查询
 def create_mcp_client():
-    """创建 AgentCore Gateway MCP 客户端"""
-    # 使用 streamablehttp_client 连接到 AgentCore Gateway
-    client = MCPClient(
-        lambda: streamablehttp_client(AGENTCORE_GATEWAY_URL)
+    """
+    创建 AgentCore Gateway MCP 客户端
+    使用 AWS IAM SigV4 签名进行身份验证
+    """
+    # 使用 AWS IAM 认证的 MCP 客户端连接到 AgentCore Gateway
+    mcp_factory = lambda: aws_iam_streamablehttp_client(
+        endpoint=AGENTCORE_GATEWAY_URL,
+        aws_region=REGION,
+        aws_service='bedrock-agentcore'  # AgentCore Gateway 的 AWS 服务名称
     )
+    client = MCPClient(mcp_factory)
     return client
 
 

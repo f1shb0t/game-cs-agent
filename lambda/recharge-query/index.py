@@ -75,40 +75,37 @@ def query_player_recharge(
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """
     Lambda 主处理函数
-    处理来自 AgentCore Gateway 的 MCP 工具调用
+    处理来自 AgentCore Gateway 的工具调用
 
-    AgentCore Gateway 会将 MCP 工具调用转换为 Lambda 事件：
+    AgentCore Gateway 会将 MCP 工具调用参数直接传递给 Lambda：
     {
-        "tool": "query_player_recharge",
-        "parameters": {
-            "player_id": "player123",
-            "start_date": "2024-01-01T00:00:00Z",
-            "end_date": "2024-12-31T23:59:59Z"
-        }
+        "player_id": "player123",
+        "start_date": "2024-01-01T00:00:00Z",  // 可选
+        "end_date": "2024-12-31T23:59:59Z"     // 可选
     }
     """
 
     print(f'收到请求: {json.dumps(event, ensure_ascii=False)}')
 
     try:
-        # 解析请求参数
-        if isinstance(event.get('body'), str):
+        # AgentCore Gateway 将工具参数直接放在事件中
+        # 支持两种格式：
+        # 1. AgentCore Gateway 格式（参数直接在 event 根部）
+        # 2. 旧的 Function URL 格式（参数在 body.parameters 中）
+
+        if 'body' in event and isinstance(event['body'], str):
+            # Lambda Function URL 格式（向后兼容）
             body = json.loads(event['body'])
+            if 'parameters' in body:
+                parameters = body['parameters']
+            else:
+                parameters = body
+        elif 'parameters' in event:
+            # 包装格式
+            parameters = event['parameters']
         else:
-            body = event.get('body', event)
-
-        # 获取工具名称和参数
-        tool_name = body.get('tool', '')
-        parameters = body.get('parameters', {})
-
-        # 验证工具名称
-        if tool_name != 'query_player_recharge':
-            return {
-                'statusCode': 400,
-                'body': json.dumps({
-                    'error': f'不支持的工具: {tool_name}'
-                }, ensure_ascii=False)
-            }
+            # AgentCore Gateway 直接传递参数格式
+            parameters = event
 
         # 获取参数
         player_id = parameters.get('player_id')

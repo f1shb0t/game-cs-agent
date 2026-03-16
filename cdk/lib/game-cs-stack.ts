@@ -13,9 +13,7 @@ import * as logs from 'aws-cdk-lib/aws-logs';
 import { Construct } from 'constructs';
 import * as path from 'path';
 import { PythonFunction } from '@aws-cdk/aws-lambda-python-alpha';
-
-// 注意: AgentCore Gateway 使用 alpha 包
-// import * as agentcore from '@aws-cdk/aws-bedrock-agentcore-alpha';
+import * as agentcore from '@aws-cdk/aws-bedrock-agentcore-alpha';
 
 export class GameCsAgentStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
@@ -143,7 +141,7 @@ def handler(event, context):
                 storageConfiguration={
                     'type': 'OPENSEARCH_SERVERLESS',
                     'opensearchServerlessConfiguration': {
-                        'collectionArn': 'arn:aws:aoss:${AWS::Region}:${AWS::AccountId}:collection/default',
+                        'collectionArn': 'arn:aws:aoss:\${AWS::Region}:\${AWS::AccountId}:collection/default',
                         'vectorIndexName': 'game-cs-index',
                         'fieldMapping': {
                             'vectorField': 'vector',
@@ -244,18 +242,60 @@ def handler(event, context):
 
     rechargeTable.grantReadData(rechargeQueryFunction);
 
-    // ========== AgentCore Gateway (简化版) ==========
-    // 注意: 完整的 AgentCore Gateway 需要使用 @aws-cdk/aws-bedrock-agentcore-alpha
-    // 这里使用 Lambda Function URL 作为简化替代
-
-    const agentcoreGatewayUrl = rechargeQueryFunction.addFunctionUrl({
-      authType: lambda.FunctionUrlAuthType.AWS_IAM,
-      cors: {
-        allowedOrigins: ['*'],
-        allowedMethods: [lambda.HttpMethod.POST],
-        allowedHeaders: ['*'],
-      },
+    // ========== AgentCore Gateway ==========
+    // 使用 AWS IAM 授权进行 Gateway 访问控制
+    // 注意: 也可以使用 Cognito JWT 授权，详见下方注释
+    const gateway = new agentcore.Gateway(this, 'AgentCoreGateway', {
+      gatewayName: 'game-cs-gateway',
+      // 使用 IAM 授权（适合 Lambda 到 Gateway 的服务间调用）
+      authorizerConfiguration: agentcore.GatewayAuthorizer.usingAwsIam(),
     });
+
+    // 添加 Lambda 目标，暴露为 MCP 工具
+    gateway.addLambdaTarget('RechargeQuery', {
+      lambdaFunction: rechargeQueryFunction,
+      gatewayTargetName: 'recharge-query',
+      description: '查询玩家充值记录工具',
+      toolSchema: agentcore.ToolSchema.fromInline([{
+        name: 'query_player_recharge',
+        description: '查询玩家的充值历史记录，支持按日期范围过滤',
+        inputSchema: {
+          type: agentcore.SchemaDefinitionType.OBJECT,
+          properties: {
+            player_id: {
+              type: agentcore.SchemaDefinitionType.STRING,
+              description: '玩家ID，例如 player_001',
+            },
+            start_date: {
+              type: agentcore.SchemaDefinitionType.STRING,
+              description: '开始日期，ISO 8601 格式（可选），例如 2024-01-01T00:00:00Z',
+            },
+            end_date: {
+              type: agentcore.SchemaDefinitionType.STRING,
+              description: '结束日期，ISO 8601 格式（可选），例如 2024-12-31T23:59:59Z',
+            },
+          },
+          required: ['player_id'],
+        },
+      }]),
+    });
+
+    // 获取 Gateway URL（非空断言，Gateway 创建后 URL 必定存在）
+    const agentcoreGatewayUrl = gateway.gatewayUrl!;
+
+    // ===== 可选: 使用 Cognito JWT 授权替代 IAM =====
+    // 如需使用 Cognito JWT 授权，替换上面的 Gateway 创建为：
+    //
+    // const gateway = new agentcore.Gateway(this, 'AgentCoreGateway', {
+    //   gatewayName: 'game-cs-gateway',
+    //   authorizerConfiguration: agentcore.GatewayAuthorizer.usingJwt({
+    //     discoveryUrl: `https://cognito-idp.${this.region}.amazonaws.com/${userPool.userPoolId}/.well-known/openid-configuration`,
+    //     allowedAudiences: [userPoolClient.userPoolClientId],
+    //   }),
+    // });
+    //
+    // 然后在 agent Lambda 中，需要从 API Gateway 事件中提取用户的 JWT token
+    // 并将其传递给 MCP 客户端作为 Bearer token
 
     // ========== Strands Agent Lambda ==========
     const agentFunction = new lambda.Function(this, 'AgentFunction', {
@@ -266,7 +306,8 @@ def handler(event, context):
       memorySize: 1024,
       environment: {
         KNOWLEDGE_BASE_ID: knowledgeBaseId,
-        AGENTCORE_GATEWAY_URL: agentcoreGatewayUrl.url,
+        AGENTCORE_GATEWAY_URL: agentcoreGatewayUrl,
+        AWS_REGION_NAME: this.region,
       },
       logRetention: logs.RetentionDays.ONE_WEEK,
     });
@@ -293,8 +334,8 @@ def handler(event, context):
       ],
     }));
 
-    // 授予调用 recharge query function 的权限
-    rechargeQueryFunction.grantInvokeUrl(agentFunction);
+    // 授予调用 AgentCore Gateway 的权限
+    gateway.grantInvoke(agentFunction);
 
     // ========== API Gateway with Streaming ==========
     const api = new apigateway.RestApi(this, 'GameCsApi', {
@@ -515,6 +556,11 @@ def handler(event, context):
     new cdk.CfnOutput(this, 'KnowledgeBaseId', {
       value: knowledgeBaseId,
       description: 'Bedrock Knowledge Base ID',
+    });
+
+    new cdk.CfnOutput(this, 'AgentCoreGatewayUrl', {
+      value: agentcoreGatewayUrl,
+      description: 'AgentCore Gateway URL (MCP Endpoint)',
     });
   }
 }
