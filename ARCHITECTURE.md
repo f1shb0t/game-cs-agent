@@ -43,6 +43,7 @@ Frontend (S3+CloudFront)  →  API Gateway (REST, streaming)  →  Lambda (Stran
 - 存放游戏FAQ、规则等知识
 - 作为 Strands agent 的工具（retrieve tool）
 - S3 作为数据源
+- Embedding 模型: Cohere Embed Multilingual V3（多语言支持）
 
 ### 6. DynamoDB + 查询 Lambda
 - DynamoDB 表存放玩家充值记录（模拟数据）

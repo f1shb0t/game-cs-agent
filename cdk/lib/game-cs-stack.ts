@@ -135,7 +135,7 @@ def handler(event, context):
                 knowledgeBaseConfiguration={
                     'type': 'VECTOR',
                     'vectorKnowledgeBaseConfiguration': {
-                        'embeddingModelArn': f'arn:aws:bedrock:{props["Region"]}::foundation-model/amazon.titan-embed-text-v2:0'
+                        'embeddingModelArn': f'arn:aws:bedrock:{props["Region"]}::foundation-model/cohere.embed-multilingual-v3'
                     }
                 },
                 storageConfiguration={

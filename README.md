@@ -131,7 +131,7 @@ toolSchema: {
 - **API**: Amazon API Gateway (REST with Streaming)
 - **AI 网关**: AWS Bedrock AgentCore Gateway (MCP 工具编排)
 - **认证**: Amazon Cognito (用户认证), AWS IAM (服务间认证)
-- **AI**: Amazon Bedrock (Claude + Knowledge Base)
+- **AI**: Amazon Bedrock (Claude + Knowledge Base + Cohere Embed Multilingual V3)
 - **存储**: Amazon S3, Amazon DynamoDB
 - **CDN**: Amazon CloudFront
 - **日志**: Amazon CloudWatch Logs
